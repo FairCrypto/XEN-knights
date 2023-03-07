@@ -21,7 +21,7 @@ module.exports = {
       port: 8545,
       network_id: "222222222",
       websocket: true,
-      gasLimit: 15_000_000,
+      gasLimit: 30_000_000,
       //from: '0x0E4F1eB5c6c1ae7D6B7B2A8FcbCB4627644ad51E'
     },
     goerli: {
@@ -96,6 +96,22 @@ module.exports = {
       networkCheckTimeout: 999999
       //websockets: true
     },
+    x1: {
+      provider: () => new HDWalletProvider({
+        privateKeys: [process.env.PK_X1],
+        // providerOrUrl: `http://localhost:10002`,
+        providerOrUrl: `https://x1-devnet.xen.network`,
+        pollingInterval: 5_000
+      }),
+      //network_id: 100,       // Custom network
+      network_id: 202212,       // Custom network
+      gas: 10_000_000,
+      gasPrice: 110_000_000_000
+      // gas: 8500000,           // Gas sent with each transaction (default: ~6700000)
+      // gasPrice: 20000000000,  // 20 gwei (in wei) (default: 100 gwei)
+      // from: DEPLOYER_ADDRESS_X1,        // Account to send transactions from (default: accounts[0])
+      // websocket: true         // Enable EventEmitter interface for web3 (default: false)
+    },
   },
   mocha: {
     enableTimeouts: false,
@@ -107,7 +123,7 @@ module.exports = {
       settings: {
         optimizer: {
           enabled: true,
-          runs: 20
+          runs: 200
         },
         evmVersion: "london"
       }

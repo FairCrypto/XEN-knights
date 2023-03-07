@@ -31,3 +31,5 @@ coverage/
 
 *.svg
 *.sh
+
+accounts.js
