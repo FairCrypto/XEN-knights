@@ -15,7 +15,6 @@ module.exports = async function (deployer, network) {
         XENKnights,
         xenStake.address,
         Math.floor(Date.now() / 1000) + (Number(XK_DELAY) || 10),
-        (Number(XK_DURATION) || 10),
-        0
+        (Number(XK_DURATION) || 10)
     );
 };

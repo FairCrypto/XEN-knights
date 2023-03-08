@@ -50,52 +50,52 @@ contract("XENKnights Leaderboard: Equal stakes", async accounts => {
     it("leaderboard should return array of tokenIds sorted by amounts descending", async () => {
         const count = 100;
         const resultIds = await xenKnights.leaderboard(count);
-        extraPrint === '2' && console.log('    results', resultIds.map(_ => _.toNumber()));
+        extraPrint === '2' && console.log('    results', resultIds);
         const expectedIds = [...sortedIds.slice(0, max)].reverse();
         extraPrint === '2' && console.log('    expected', expectedIds);
-        assert.ok(resultIds.map(_ => _.toNumber()).reduce((res,id,i) => res && (id === expectedIds[i]), true));
+        assert.ok(resultIds.reduce((res,id,i) => res && (id === expectedIds[i].toString()), true));
     })
 
     it("shall disallow to enter the competition with same offer beyond max count", async () => {
         let total = await xenKnights.totalPlayers().then(_ => _.toNumber());
         assert.ok(total === max);
-        let lastIndex = await xenKnights.lastIndex().then(_ => _.toNumber());
-        assert.ok(lastIndex === max - 1);
+        let lastIndex = await xenKnights.lastIndex();
+        assert.ok(lastIndex === (max - 1).toString());
         await assert.rejects(() =>  xenKnights.enterCompetition0(max + 1, 100), 'XenKnights: below the threshold');
         await assert.rejects(() =>  xenKnights.enterCompetition0(max + 2, 100), 'XenKnights: below the threshold');
         total = await xenKnights.totalPlayers().then(_ => _.toNumber());
         assert.ok(total === max);
-        lastIndex = await xenKnights.lastIndex().then(_ => _.toNumber());
-        assert.ok(lastIndex === max - 1);
+        lastIndex = await xenKnights.lastIndex();
+        assert.ok(lastIndex === (max - 1).toString());
     })
 
     it("shall allow to enter the competition with bigger offer beyond max count", async () => {
         const biggerAmount = 200;
-        let nextIndex = await xenKnights.nextIndex(biggerAmount).then(_ => _.toNumber());
-        assert.ok(nextIndex === 0);
+        let nextIndex = await xenKnights.nextIndex(biggerAmount); // .then(_ => _.toNumber());
+        assert.ok(nextIndex === (0).toString());
         await assert.doesNotReject(async () => {
             const res = await xenKnights.enterCompetition0(max + 1, biggerAmount);
             gasUsed.push(res.receipt.gasUsed);
             return res;
         });
-        let lastIndex = await xenKnights.lastIndex().then(_ => _.toNumber());
-        assert.ok(lastIndex === max - 2);
-        nextIndex = await xenKnights.nextIndex(biggerAmount).then(_ => _.toNumber());
-        assert.ok(nextIndex === 0);
+        let lastIndex = await xenKnights.lastIndex(); // .then(_ => _.toNumber());
+        assert.ok(lastIndex === (max - 2).toString());
+        nextIndex = await xenKnights.nextIndex(biggerAmount); // .then(_ => _.toNumber());
+        assert.ok(nextIndex === (0).toString());
         await assert.doesNotReject(() =>  xenKnights.enterCompetition0(max + 2, biggerAmount));
         let total = await xenKnights.totalPlayers().then(_ => _.toNumber());
         assert.ok(total === max);
-        lastIndex = await xenKnights.lastIndex().then(_ => _.toNumber());
-        assert.ok(lastIndex === max - 3);
+        lastIndex = await xenKnights.lastIndex(); // .then(_ => _.toNumber());
+        assert.ok(lastIndex === (max - 3).toString());
     })
 
     it("leaderboard should return array of tokenIds sorted by amounts descending (after additions)", async () => {
         const count = 100;
         const resultIds = await xenKnights.leaderboard(count);
-        extraPrint === '2' && console.log('    results (+2)', resultIds.map(_ => _.toNumber()));
+        extraPrint === '2' && console.log('    results (+2)', resultIds);
         const expectedIds = [...[...sortedIds].reverse().slice(4), max + 2, max + 1];
         extraPrint === '2' && console.log('    expected (+2)', expectedIds);
-        assert.ok(resultIds.map(_ => _.toNumber()).reduce((res,id,i) => res && (id === expectedIds[i]), true));
+        assert.ok(resultIds.reduce((res,id,i) => res && (id === expectedIds[i].toString()), true));
     })
 
     it("optional min/max gas numbers (requires EXTRA_PRINT)", async () => {
@@ -123,10 +123,10 @@ contract("XENKnights Leaderboard: Equal stakes", async accounts => {
     it("leaderboard should return array of tokenIds sorted by amounts descending (after total replacement)", async () => {
         const count = 100;
         const resultIds = await xenKnights.leaderboard(count);
-        extraPrint === '2' && console.log('    results (new)', resultIds.map(_ => _.toNumber()));
+        extraPrint === '2' && console.log('    results (new)', resultIds);
         const expectedIds = [...sortedIds2.slice(0, max)].reverse();
         extraPrint === '2' && console.log('    expected (new)', expectedIds);
-        assert.ok(resultIds.map(_ => _.toNumber()).reduce((res,id,i) => res && (id === expectedIds[i]), true));
+        assert.ok(resultIds.reduce((res,id,i) => res && (id === expectedIds[i].toString()), true));
     })
 
     it("optional min/max gas numbers (requires EXTRA_PRINT)", async () => {

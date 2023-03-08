@@ -65,9 +65,9 @@ contract("XENKnights Leaderboard: Random stakes", async accounts => {
         assert.ok(total === len);
         extraPrint === '2' && console.log('    gas used', gasUsed.reverse());
         const resultIds = await xenKnights.leaderboard(count);
-        extraPrint === '2' && console.log('    result', resultIds.map(_ => _.toNumber()));
+        extraPrint === '2' && console.log('    result', resultIds);
         extraPrint === '2' && console.log('    expected', sortedIds);
-        assert.ok(resultIds.map(_ => _.toNumber()).reduce((res,id,i) => res && (id === sortedIds[i]), true));
+        assert.ok(resultIds.reduce((res,id,i) => res && (id === sortedIds[i].toString()), true));
     })
 
     it("optional min/max gas numbers (requires EXTRA_PRINT)", async () => {
