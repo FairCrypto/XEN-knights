@@ -6,7 +6,6 @@ require("dotenv").config();
 module.exports = async function (deployer, network) {
 
   const xenContractAddress = process.env[`${network.toUpperCase()}_CONTRACT_ADDRESS`];
-  console.log();
 
   if (xenContractAddress) {
     console.log('    using existing XEN Crypto contract at', xenContractAddress)
