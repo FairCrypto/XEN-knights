@@ -1,16 +1,16 @@
-const XENStake = artifacts.require("XENStake");
-const XENCrypto = artifacts.require("XENCrypto");
-const MagicNumbers = artifacts.require("MagicNumbers");
+// const XENStake = artifacts.require("XENStake");
+// const XENCrypto = artifacts.require("XENCrypto");
+// const MagicNumbers = artifacts.require("MagicNumbers");
 
-const DateTime = artifacts.require("DateTime");
+// const DateTime = artifacts.require("DateTime");
 // const StringData = artifacts.require("StringData");
-const StakeInfo = artifacts.require("StakeInfo");
-const StakeMetadata = artifacts.require("StakeMetadata");
+// const StakeInfo = artifacts.require("StakeInfo");
+// const StakeMetadata = artifacts.require("StakeMetadata");
 
 require("dotenv").config();
 
 module.exports = async function (deployer, network) {
-
+/*
     const xenContractAddress = process.env[`${network.toUpperCase()}_CONTRACT_ADDRESS`];
     const xenStakerAddress = process.env[`${network.toUpperCase()}_STAKER_ADDRESS`];
 
@@ -51,4 +51,6 @@ module.exports = async function (deployer, network) {
     }
     if (network === 'test') {
     }
+
+ */
 };

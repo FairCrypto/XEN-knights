@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.10;
 
-import "@faircrypto/xen-stake/contracts/XENStake.sol";
-import "@faircrypto/xen-stake/contracts/libs/StakeInfo.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
+import "@faircrypto/xen-crypto/contracts/XENCrypto.sol";
+import "@faircrypto/xen-crypto/contracts/interfaces/IBurnRedeemable.sol";
+import "@faircrypto/xen-crypto/contracts/interfaces/IBurnableToken.sol";
+import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
+import "./libs/Strings.sol";
 
 /*
     Sorting in Ethereum
@@ -12,9 +14,8 @@ import "@openzeppelin/contracts/utils/Strings.sol";
     https://gist.github.com/fiveoutofnine/5140b17f6185aacb71fc74d3a315a9da
 
 */
-contract XENKnights {
+contract XENKnights is ERC165, IBurnRedeemable {
 
-    using StakeInfo for uint256;
     using Strings for uint256;
 
     // PUBLIC CONSTANTS
@@ -24,15 +25,12 @@ contract XENKnights {
     string public constant GUARD = 'guard'; // 0xFF..F, not a valid tokenId
 
     // common business logic
-    uint256 public constant STAKE_TERM_DAYS = 1_000;
     uint256 public constant MAX_WINNERS = 100;
 
     // PUBLIC MUTABLE STATE
     uint256 public totalPlayers;
     // taproot address => total stake amount
     mapping(string => uint256) public amounts;
-    // tokenId =>  taproot address
-    mapping(uint256 => string) public wallets;
 
     // PRIVATE STATE
 
@@ -42,21 +40,22 @@ contract XENKnights {
     // Y => ...
     // ... => GUARD
     mapping(string => string) private _linkedList;
+    string private _current = '';
 
     // PUBLIC IMMUTABLE STATE
 
     uint256 public immutable startTs;
     uint256 public immutable endTs;
     // pointer to XEN Stake contract
-    XENStake public immutable xenStake;
+    IBurnableToken public immutable xenCrypto;
 
     // CONSTRUCTOR
 
-    constructor(address xenStake_, uint256 startTs_, uint256 durationDays_) {
-        require(xenStake_ != address(0));
+    constructor(address xenCrypto_, uint256 startTs_, uint256 durationDays_) {
+        require(xenCrypto_ != address(0));
         require(startTs_ > block.timestamp);
         require(durationDays_ > 0);
-        xenStake = XENStake(xenStake_);
+        xenCrypto = IBurnableToken(xenCrypto_);
         startTs = startTs_;
         endTs = startTs_ + durationDays_ * SECS_IN_DAY;
         _linkedList[GUARD] = GUARD; // initialize the linked list
@@ -64,40 +63,21 @@ contract XENKnights {
 
     // EVENTS
 
-    event Admitted(address indexed user, string taprootAddress, uint256 tokenId, uint256 amount);
-    event Replaced(string taprootAddress, uint256 amount);
+    event Admitted(address indexed user, string taprootAddress, uint256 amount, uint256 totalAmount);
+    event Replaced(string taprootAddress, uint256 totalAmount);
 
     // PRIVATE HELPERS
 
-    function _checkIfEligible(uint256 tokenId, string calldata taprootAddress) private view {
+    function _checkIfEligible(uint256 amount, string calldata taprootAddress) private view {
         require(msg.sender == tx.origin, 'XenKnights: only EOAs allowed');
         require(block.timestamp > startTs, 'XenKnights: competition not yet started');
         require(block.timestamp < endTs, 'XenKnights: competition already finished');
-        require(tokenId > 0, 'XenKnights: illegal tokenId');
+        require(amount > 0, 'XenKnights: illegal amount');
         require(bytes(taprootAddress).length == 62, 'XenKnights: illegal taprootAddress length');
         require(
             _compare(string(bytes(taprootAddress)[0:4]), 'b1cp'),
             'XenKnights: illegal taprootAddress signature'
         );
-        require(
-            // bytes(wallets[tokenId]).length == 0 || _compare(wallets[tokenId], taprootAddress),
-            bytes(wallets[tokenId]).length == 0,
-            'XenKnights: tokenId already used'
-        );
-        require(
-            IERC721(address(xenStake)).ownerOf(tokenId) == msg.sender,
-            'XenKnights: not the tokenId owner'
-        );
-    }
-
-    function _checkStakeGetAmount(uint256 tokenId) private view returns (uint256) {
-        uint256 stakeInfo = xenStake.stakeInfo(tokenId);
-        require(stakeInfo > 0, 'XenKnights: no XEN Stake found for tokenId');
-        (uint256 term, uint256 maturityTs, uint256 amount, , , ) = stakeInfo.decodeStakeInfo();
-        require(term == STAKE_TERM_DAYS, 'XenKnights: stake term incorrect');
-        uint256 stakeTs = maturityTs - term * SECS_IN_DAY;
-        require(stakeTs > startTs, 'XenKnights: stake made before startTs');
-        return amount;
     }
 
     function _compare(string memory one, string memory two) private pure returns (bool) {
@@ -208,7 +188,6 @@ contract XENKnights {
 
         if (existingAmount == 0) {
             // new stake
-            wallets[tokenId] = taprootAddress;
             newIndex = _findIndex(totalAmount);
             _linkedList[taprootAddress] = _linkedList[newIndex];
             _linkedList[newIndex] = taprootAddress;
@@ -242,24 +221,46 @@ contract XENKnights {
      * @dev Attempt to enter competition based on eligible XEN Stake identified by `tokenId`
      * @dev Additionally, `taprootAddress` is supplied and stored along with tokenId
      */
-    function enterCompetition(uint256 tokenId, string calldata taprootAddress) external {
-        _checkIfEligible(tokenId, taprootAddress);
+    function enterCompetition(uint256 newAmount, string calldata taprootAddress) external {
+        require(bytes(_current).length == 0, 'XenKnights: illegal state');
+        _checkIfEligible(newAmount, taprootAddress);
 
-        uint256 newAmount = _checkStakeGetAmount(tokenId);
         uint256 existingAmount = amounts[taprootAddress];
         uint256 totalAmount = existingAmount + newAmount;
 
         // Check if we are below min and revert
         require(totalPlayers < MAX_WINNERS || totalAmount > minAmount(), 'XenKnights: amount less than minimum');
+
+        _current = taprootAddress;
+        xenCrypto.burn(msg.sender, newAmount);
+    }
+
+    // IERC165 IMPLEMENTATION
+
+    /**
+        @dev confirms support for IERC-165 and IBurnRedeemable interfaces
+     */
+    function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
+        return
+        interfaceId == type(IBurnRedeemable).interfaceId ||
+        super.supportsInterface(interfaceId);
+    }
+
+    // IBurnRedeemable interface method(s)
+
+    function onTokenBurned(address user, uint256 amount) external {
+        require(bytes(_current).length != 0, 'XenKnights: illegal state on burn');
+
+        uint256 existingAmount = amounts[_current];
+        uint256 totalAmount = existingAmount + amount;
         string memory newIndex;
         string memory prevIndex;
 
         if (existingAmount == 0) {
             // new stake
-            wallets[tokenId] = taprootAddress;
             newIndex = _findIndex(totalAmount);
-            _linkedList[taprootAddress] = _linkedList[newIndex];
-            _linkedList[newIndex] = taprootAddress;
+            _linkedList[_current] = _linkedList[newIndex];
+            _linkedList[newIndex] = _current;
             if (totalPlayers < MAX_WINNERS) {
                 // room for one more => increase count
                 totalPlayers++;
@@ -275,15 +276,17 @@ contract XENKnights {
             }
         } else {
             // existing stake: possibly move position inside the list
-            (prevIndex, newIndex) = _findIndexes(taprootAddress, totalAmount);
-            if (!_compare(newIndex, taprootAddress)) {
-                _linkedList[prevIndex] = _linkedList[taprootAddress];
-                _linkedList[taprootAddress] = _linkedList[newIndex];
-                _linkedList[newIndex] = taprootAddress;
+            (prevIndex, newIndex) = _findIndexes(_current, totalAmount);
+            if (!_compare(newIndex, _current)) {
+                _linkedList[prevIndex] = _linkedList[_current];
+                _linkedList[_current] = _linkedList[newIndex];
+                _linkedList[newIndex] = _current;
             }
         }
 
-        amounts[taprootAddress] = totalAmount;
-        emit Admitted(msg.sender, taprootAddress, tokenId, totalAmount);
+        amounts[_current] = totalAmount;
+        _current = '';
+        emit Admitted(user, _current, amount, totalAmount);
     }
+
 }

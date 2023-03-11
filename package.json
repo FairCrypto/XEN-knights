@@ -41,7 +41,7 @@
   },
   "dependencies": {
     "@ethersproject/experimental": "^5.7.0",
-    "@faircrypto/xen-stake": "^0.1.0"
+    "@faircrypto/xen-crypto": "^0.3.2"
   },
   "devDependencies": {
     "@ethersproject/providers": "^5.7.2",
