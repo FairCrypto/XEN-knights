@@ -14,14 +14,8 @@ contract("XENKnights", async accounts => {
 
     this.timeout = 999_000_000;
 
-    const taproots = [
-        'b1cp0000000000000000000000000000000000000000000000000000000000',
-        'b1cp0000000000000000000000000000000000000000000000000000000001',
-        'b1cp0000000000000000000000000000000000000000000000000000000002',
-        'b1cp0000000000000000000000000000000000000000000000000000000003',
-        'b1cp0000000000000000000000000000000000000000000000000000000004',
-        'b1cp0000000000000000000000000000000000000000000000000000000005',
-    ]
+    const taproots = Array(110).fill(null)
+        .map((_, i) => 'b1cp' + i.toString().padStart(58, '0'));
 
     const ether = 10n ** 18n;
     let xenCrypto;
@@ -244,6 +238,30 @@ contract("XENKnights", async accounts => {
         assert.ok(board[3] === taproots[1]);
     })
 
+    it("shall allow users with new taproot addresses enter the competition pushing out losers", async () => {
+        for await (const addr of taproots.slice(6)) {
+            const idx = Math.floor(Math.random() * 10);
+            const minAmount = await xenKnights.minAmount().then(toBigInt);
+            await assert.doesNotReject(
+                () => xenKnights.enterCompetition(minAmount + 1n, addr, { from: accounts[idx] })
+            );
+            process.stdout.write('.');
+        }
+
+        // ................................................................................................
+        process.stdout.write('\n');
+    })
+
+    it("shall allow to retrieve the leaderboard sorted in the right order (ascending by amount burned) - 2", async () => {
+        const board = await xenKnights.leaderboard(100);
+        assert.ok(Array.isArray(board));
+        console.log(board);
+        // assert.ok(board[0] === taproots[2]);
+        // assert.ok(board[1] === taproots[5]);
+        // assert.ok(board[2] === taproots[4]);
+        // assert.ok(board[3] === taproots[1]);
+    })
+
     it("shall reject to enter XEN Knights competition after the end time", async () => {
         await timeMachine.advanceTime(1 * 24 * 3600 + 3600);
         await timeMachine.advanceBlock();
@@ -253,4 +271,36 @@ contract("XENKnights", async accounts => {
         );
     })
 
+    it("shall reject to withdraw winning amount after auction end time", async () => {
+        await assert.rejects(
+            () => xenKnights.withdraw(taproots[0]),
+            'XenKnights: nothing to withdraw'
+        );
+        await assert.rejects(
+            () => xenKnights.withdraw(taproots[1]),
+            'XenKnights: winner cannot withdraw'
+        );
+        await assert.doesNotReject(
+            () => xenKnights.withdraw(taproots[2]),
+            // 'XenKnights: winner cannot withdraw'
+        );
+        await assert.rejects(
+            () => xenKnights.withdraw(taproots[3]),
+            'XenKnights: nothing to withdraw'
+        );
+        await assert.rejects(
+            () => xenKnights.withdraw(taproots[4]),
+            'XenKnights: winner cannot withdraw'
+        );
+        await assert.rejects(
+            () => xenKnights.withdraw(taproots[5]),
+            'XenKnights: winner cannot withdraw'
+        );
+    })
+
+    it("shall allow anyone to burn winners' funds after auction end time", async () => {
+        await assert.doesNotReject(
+            () => xenKnights.burn()
+        );
+    })
 })

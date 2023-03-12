@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.10;
 
-import "@faircrypto/xen-crypto/contracts/XENCrypto.sol";
-import "@faircrypto/xen-crypto/contracts/interfaces/IBurnRedeemable.sol";
-import "@faircrypto/xen-crypto/contracts/interfaces/IBurnableToken.sol";
-import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
+// import "@faircrypto/xen-crypto/contracts/XENCrypto.sol";;
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./libs/Strings.sol";
 
 /*
@@ -14,7 +12,7 @@ import "./libs/Strings.sol";
     https://gist.github.com/fiveoutofnine/5140b17f6185aacb71fc74d3a315a9da
 
 */
-contract XENKnights is ERC165, IBurnRedeemable {
+contract XENKnights {
 
     using Strings for uint256;
 
@@ -29,25 +27,28 @@ contract XENKnights is ERC165, IBurnRedeemable {
 
     // PUBLIC MUTABLE STATE
     uint256 public totalPlayers;
+    bool public burned;
     // taproot address => total stake amount
     mapping(string => uint256) public amounts;
+    // user address => taproot address => total stake amount
+    mapping(address => mapping(string => uint256)) public userAmounts;
 
     // PRIVATE STATE
 
-    // linked sorted list of tokenIds
-    // GUARD => X
-    // X => Y (Y >= X)
-    // Y => ...
-    // ... => GUARD
+    // linked sorted list of taproot addresses (primary keys)
+    //      GUARD => ...
+    //      ... => X
+    //      X => Y (amounts[Y] >= amounts[X])
+    //      Y => ...
+    //      ... => GUARD
     mapping(string => string) private _linkedList;
-    string private _current = '';
 
     // PUBLIC IMMUTABLE STATE
 
     uint256 public immutable startTs;
     uint256 public immutable endTs;
     // pointer to XEN Stake contract
-    IBurnableToken public immutable xenCrypto;
+    IERC20 public immutable xenCrypto;
 
     // CONSTRUCTOR
 
@@ -55,7 +56,7 @@ contract XENKnights is ERC165, IBurnRedeemable {
         require(xenCrypto_ != address(0));
         require(startTs_ > block.timestamp);
         require(durationDays_ > 0);
-        xenCrypto = IBurnableToken(xenCrypto_);
+        xenCrypto = IERC20(xenCrypto_);
         startTs = startTs_;
         endTs = startTs_ + durationDays_ * SECS_IN_DAY;
         _linkedList[GUARD] = GUARD; // initialize the linked list
@@ -64,11 +65,13 @@ contract XENKnights is ERC165, IBurnRedeemable {
     // EVENTS
 
     event Admitted(address indexed user, string taprootAddress, uint256 amount, uint256 totalAmount);
-    event Replaced(string taprootAddress, uint256 totalAmount);
+    event Replaced(string taprootAddress, uint256 amount);
+    event Withdrawn(address indexed user, string taprootAddress, uint256 amount);
+    event Burned(uint256 amount);
 
     // PRIVATE HELPERS
 
-    function _checkIfEligible(uint256 amount, string calldata taprootAddress) private view {
+    function _canEnter(uint256 amount, string calldata taprootAddress) private view {
         require(msg.sender == tx.origin, 'XenKnights: only EOAs allowed');
         require(block.timestamp > startTs, 'XenKnights: competition not yet started');
         require(block.timestamp < endTs, 'XenKnights: competition already finished');
@@ -78,6 +81,23 @@ contract XENKnights is ERC165, IBurnRedeemable {
             _compare(string(bytes(taprootAddress)[0:4]), 'b1cp'),
             'XenKnights: illegal taprootAddress signature'
         );
+    }
+
+    function _canWithdraw(string calldata taprootAddress) private view {
+        require(msg.sender == tx.origin, 'XenKnights: only EOAs allowed');
+        require(block.timestamp > endTs, 'XenKnights: competition not yet finished');
+        require(bytes(taprootAddress).length == 62, 'XenKnights: illegal taprootAddress length');
+        require(
+            _compare(string(bytes(taprootAddress)[0:4]), 'b1cp'),
+            'XenKnights: illegal taprootAddress signature'
+        );
+        require(amounts[taprootAddress] == 0, 'XenKnights: winner cannot withdraw');
+        require(userAmounts[msg.sender][taprootAddress] > 0, 'XenKnights: nothing to withdraw');
+    }
+
+    function _canBurn() private view {
+        require(block.timestamp > endTs, 'XenKnights: competition not yet finished');
+        require(totalPlayers > 0 && xenCrypto.balanceOf(address(this)) > 0, 'XenKnights: already burned');
     }
 
     function _compare(string memory one, string memory two) private pure returns (bool) {
@@ -222,8 +242,9 @@ contract XENKnights is ERC165, IBurnRedeemable {
      * @dev Additionally, `taprootAddress` is supplied and stored along with tokenId
      */
     function enterCompetition(uint256 newAmount, string calldata taprootAddress) external {
-        require(bytes(_current).length == 0, 'XenKnights: illegal state');
-        _checkIfEligible(newAmount, taprootAddress);
+        _canEnter(newAmount, taprootAddress);
+
+        require(xenCrypto.transferFrom(msg.sender, address(this), newAmount), 'XenKnights: could not transfer XEN');
 
         uint256 existingAmount = amounts[taprootAddress];
         uint256 totalAmount = existingAmount + newAmount;
@@ -231,36 +252,14 @@ contract XENKnights is ERC165, IBurnRedeemable {
         // Check if we are below min and revert
         require(totalPlayers < MAX_WINNERS || totalAmount > minAmount(), 'XenKnights: amount less than minimum');
 
-        _current = taprootAddress;
-        xenCrypto.burn(msg.sender, newAmount);
-    }
-
-    // IERC165 IMPLEMENTATION
-
-    /**
-        @dev confirms support for IERC-165 and IBurnRedeemable interfaces
-     */
-    function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
-        return
-        interfaceId == type(IBurnRedeemable).interfaceId ||
-        super.supportsInterface(interfaceId);
-    }
-
-    // IBurnRedeemable interface method(s)
-
-    function onTokenBurned(address user, uint256 amount) external {
-        require(bytes(_current).length != 0, 'XenKnights: illegal state on burn');
-
-        uint256 existingAmount = amounts[_current];
-        uint256 totalAmount = existingAmount + amount;
         string memory newIndex;
         string memory prevIndex;
 
         if (existingAmount == 0) {
             // new stake
             newIndex = _findIndex(totalAmount);
-            _linkedList[_current] = _linkedList[newIndex];
-            _linkedList[newIndex] = _current;
+            _linkedList[taprootAddress] = _linkedList[newIndex];
+            _linkedList[newIndex] = taprootAddress;
             if (totalPlayers < MAX_WINNERS) {
                 // room for one more => increase count
                 totalPlayers++;
@@ -276,17 +275,47 @@ contract XENKnights is ERC165, IBurnRedeemable {
             }
         } else {
             // existing stake: possibly move position inside the list
-            (prevIndex, newIndex) = _findIndexes(_current, totalAmount);
-            if (!_compare(newIndex, _current)) {
-                _linkedList[prevIndex] = _linkedList[_current];
-                _linkedList[_current] = _linkedList[newIndex];
-                _linkedList[newIndex] = _current;
+            (prevIndex, newIndex) = _findIndexes(taprootAddress, totalAmount);
+            if (!_compare(newIndex, taprootAddress)) {
+                _linkedList[prevIndex] = _linkedList[taprootAddress];
+                _linkedList[taprootAddress] = _linkedList[newIndex];
+                _linkedList[newIndex] = taprootAddress;
             }
         }
 
-        amounts[_current] = totalAmount;
-        _current = '';
-        emit Admitted(user, _current, amount, totalAmount);
+        amounts[taprootAddress] = totalAmount;
+        userAmounts[msg.sender][taprootAddress] += newAmount;
+        emit Admitted(msg.sender, taprootAddress, newAmount, totalAmount);
     }
 
+    function withdraw(string calldata taprootAddress) external {
+        _canWithdraw(taprootAddress);
+
+        uint256 amount = userAmounts[msg.sender][taprootAddress];
+        require(
+            xenCrypto.transfer(msg.sender, amount),
+            'XenKnights: error withdrawing'
+        );
+        delete userAmounts[msg.sender][taprootAddress];
+        emit Withdrawn(msg.sender, taprootAddress, amount);
+    }
+
+    function burn() external {
+        _canBurn();
+
+        uint256 totalAmount;
+        uint256 len = MAX_WINNERS > totalPlayers ? totalPlayers : MAX_WINNERS;
+        string memory index = _linkedList[GUARD];
+        for(uint256 i = 0; i < len; ++i) {
+            totalAmount += amounts[index];
+            index = _linkedList[index];
+        }
+
+        require(
+            xenCrypto.transfer(address(0xdead), totalAmount),
+            'XenKnights: error burning'
+        );
+        burned = true;
+        emit Burned(totalAmount);
+    }
 }
