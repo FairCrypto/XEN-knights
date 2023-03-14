@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.10;
 
-// import "@faircrypto/xen-crypto/contracts/XENCrypto.sol";;
+import "@faircrypto/xen-crypto/contracts/XENCrypto.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./libs/Strings.sol";
 
@@ -88,7 +88,7 @@ contract XENKnights {
         require(block.timestamp > endTs, 'XenKnights: competition not yet finished');
         require(bytes(taprootAddress).length == 62, 'XenKnights: illegal taprootAddress length');
         require(
-            _compare(string(bytes(taprootAddress)[0:4]), 'b1cp'),
+            _compare(string(bytes(taprootAddress)[0:4]), 'bc1p'),
             'XenKnights: illegal taprootAddress signature'
         );
         require(amounts[taprootAddress] == 0, 'XenKnights: winner cannot withdraw');

@@ -15,14 +15,14 @@ contract("XENKnights", async accounts => {
     this.timeout = 999_000_000;
 
     const taproots = Array(110).fill(null)
-        .map((_, i) => 'b1cp' + i.toString().padStart(58, '0'));
+        .map((_, i) => 'bc1p' + i.toString().padStart(58, '0'));
 
     const ether = 10n ** 18n;
     let xenCrypto;
     let b0, b1, b2, b3, b4, b5, b6, b7, b8, b9;
-    const badTaproot1 = 'b1cp000000000000000000000000000000000000000000000000000000000';
-    const badTaproot2 = 'b1cp00000000000000000000000000000000000000000000000000000000000';
-    const badTaproot3 = 'b2cp0000000000000000000000000000000000000000000000000000000000';
+    const badTaproot1 = 'bc1p000000000000000000000000000000000000000000000000000000000';
+    const badTaproot2 = 'bc1p00000000000000000000000000000000000000000000000000000000000';
+    const badTaproot3 = 'b1cp0000000000000000000000000000000000000000000000000000000000';
     let xenKnights;
 
     before(async () => {
