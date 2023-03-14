@@ -78,7 +78,7 @@ contract XENKnights {
         require(amount > 0, 'XenKnights: illegal amount');
         require(bytes(taprootAddress).length == 62, 'XenKnights: illegal taprootAddress length');
         require(
-            _compare(string(bytes(taprootAddress)[0:4]), 'b1cp'),
+            _compare(string(bytes(taprootAddress)[0:4]), 'bc1p'),
             'XenKnights: illegal taprootAddress signature'
         );
     }

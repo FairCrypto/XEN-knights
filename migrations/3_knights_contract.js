@@ -1,4 +1,4 @@
-const XENCrypto = artifacts.require("XENCrypto");
+// const XENCrypto = artifacts.require("XENCrypto");
 const XENKnights = artifacts.require("XENKnights");
 
 require("dotenv").config();
@@ -14,15 +14,15 @@ module.exports = async function (deployer, network) {
 
     console.log('Using Start TS', xenKnightsStartTs);
     console.log('Using Duration', xenKnightsDuration);
-    console.log('Using Delay', XK_DELAY);
+    console.log('Using Delay', delay);
 
-    const xenCrypto = xenCryptoAddress || await XENCrypto.deployed().then(_ => _.address);
+    const xenCrypto = xenCryptoAddress; // || await XENCrypto.deployed().then(_ => _.address);
     console.log('Using XEN Crypto', xenCrypto);
 
     await deployer.deploy(
         XENKnights,
         xenCrypto,
-        Math.floor(Number(xenKnightsStartTs) / 1000) + 1000 + delay * 3600 * 24,
+        Math.floor(Number(xenKnightsStartTs) / 1000) + 10 + delay * 3600 * 24,
         (Number(xenKnightsDuration) || 1)
     );
 };
