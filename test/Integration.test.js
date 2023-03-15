@@ -13,6 +13,7 @@ const { XK_DELAY = 100, XK_DURATION = 1} = process.env;
 contract("XENKnights", async accounts => {
 
     this.timeout = 999_000_000;
+    const gasUsed = [];
 
     const taproots = Array(110).fill(null)
         .map((_, i) => 'bc1p' + i.toString().padStart(58, '0'));
@@ -243,7 +244,11 @@ contract("XENKnights", async accounts => {
             const idx = Math.floor(Math.random() * 10);
             const minAmount = await xenKnights.minAmount().then(toBigInt);
             await assert.doesNotReject(
-                () => xenKnights.enterCompetition(minAmount + 1n, addr, { from: accounts[idx] })
+                async () => {
+                    const res = await xenKnights.enterCompetition(minAmount + 1n, addr, { from: accounts[idx] })
+                    gasUsed.push(res.receipt.gasUsed);
+                    return res;
+                }
             );
             process.stdout.write('.');
         }
@@ -302,5 +307,10 @@ contract("XENKnights", async accounts => {
         await assert.doesNotReject(
             () => xenKnights.burn()
         );
+    })
+
+    it("optional min/max gas numbers (requires EXTRA_PRINT)", async () => {
+        extraPrint && console.log('    Min gas', Math.min(...gasUsed));
+        extraPrint && console.log('    Max gas', Math.max(...gasUsed));
     })
 })

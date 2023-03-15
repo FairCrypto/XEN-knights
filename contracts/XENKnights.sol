@@ -28,9 +28,9 @@ contract XENKnights {
     // PUBLIC MUTABLE STATE
     uint256 public totalPlayers;
     bool public burned;
-    // taproot address => total stake amount
+    // taproot address => total bid amount
     mapping(string => uint256) public amounts;
-    // user address => taproot address => total stake amount
+    // user address => taproot address => total bid amount
     mapping(address => mapping(string => uint256)) public userAmounts;
 
     // PRIVATE STATE

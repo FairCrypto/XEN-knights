@@ -99,11 +99,9 @@ module.exports = {
     x1: {
       provider: () => new HDWalletProvider({
         privateKeys: [process.env.PK_X1],
-        // providerOrUrl: `http://localhost:10002`,
         providerOrUrl: `https://x1-devnet.xen.network`,
         pollingInterval: 5_000
       }),
-      //network_id: 100,       // Custom network
       network_id: 202212,       // Custom network
       gas: 10_000_000,
       gasPrice: 110_000_000_000
