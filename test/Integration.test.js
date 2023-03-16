@@ -13,6 +13,8 @@ const { XK_DELAY = 100, XK_DURATION = 1} = process.env;
 contract("XENKnights", async accounts => {
 
     this.timeout = 999_000_000;
+    const gasEstIndexes = [];
+    const gasEstNextIndex = [];
     const gasUsed = [];
 
     const taproots = Array(110).fill(null)
@@ -208,8 +210,13 @@ contract("XENKnights", async accounts => {
     })
 
     it("shall allow to enter XEN Knights competition from different address (3) with others' taproot address", async () => {
-        extraPrint === '2' && console.log(await xenKnights.indexes(taproots[3], 900n * ether));
-        extraPrint === '2' && console.log(await xenKnights.nextIndex(900n * ether));
+        const g1 = await xenKnights.indexes.estimateGas(taproots[3], 900n * ether).then(toBigInt);
+        const g2 = await xenKnights.nextIndex.estimateGas(900n * ether).then(toBigInt);
+        console.log(g1, g2);
+        const i1 = await xenKnights.indexes(taproots[3], 900n * ether);
+        const i2 = await xenKnights.nextIndex(900n * ether);
+        extraPrint === '2' && console.log(i1);
+        extraPrint === '2' && console.log(i2);
         await assert.doesNotReject(
             () => xenKnights.enterCompetition(400n * ether, taproots[1], { from: accounts[2] })
         );
@@ -252,7 +259,10 @@ contract("XENKnights", async accounts => {
             );
             process.stdout.write('.');
         }
-
+        const g1 = await xenKnights.indexes.estimateGas(taproots[109], 100); //.then(_ => _.toNumber());
+        const g2 = await xenKnights.nextIndex.estimateGas(100); //.then(_ => _.toNumber());
+        console.log(g1);
+        console.log(g2);
         // ................................................................................................
         process.stdout.write('\n');
     })
@@ -310,6 +320,10 @@ contract("XENKnights", async accounts => {
     })
 
     it("optional min/max gas numbers (requires EXTRA_PRINT)", async () => {
+        extraPrint && console.log('    Min est idx', Math.min(...gasEstIndexes));
+        extraPrint && console.log('    Max est idx', Math.max(...gasEstIndexes));
+        extraPrint && console.log('    Min est next idx', Math.min(...gasEstNextIndex));
+        extraPrint && console.log('    Max est next idx', Math.max(...gasEstNextIndex));
         extraPrint && console.log('    Min gas', Math.min(...gasUsed));
         extraPrint && console.log('    Max gas', Math.max(...gasUsed));
     })
