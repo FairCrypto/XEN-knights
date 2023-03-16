@@ -20,7 +20,7 @@ contract XENKnights {
     string public constant AUTHORS = "@MrJackLevin @ackebom @lbelyaev faircrypto.org";
     uint256 public constant SECS_IN_DAY = 3_600 * 24;
     // used as a unique marker for beginning and end of a linked list
-    string public constant GUARD = 'guard'; // 0xFF..F, not a valid tokenId
+    bytes32 public constant GUARD = keccak256(bytes('guard'));
 
     // common business logic
     uint256 public constant MAX_WINNERS = 100;
@@ -29,9 +29,9 @@ contract XENKnights {
     uint256 public totalPlayers;
     bool public burned;
     // taproot address => total bid amount
-    mapping(string => uint256) public amounts;
+    mapping(bytes32 => uint256) public amounts;
     // user address => taproot address => total bid amount
-    mapping(address => mapping(string => uint256)) public userAmounts;
+    mapping(address => mapping(bytes32 => uint256)) public userAmounts;
 
     // PRIVATE STATE
 
@@ -41,7 +41,7 @@ contract XENKnights {
     //      X => Y (amounts[Y] >= amounts[X])
     //      Y => ...
     //      ... => GUARD
-    mapping(string => string) private _linkedList;
+    mapping(bytes32 => bytes32) private _linkedList;
 
     // PUBLIC IMMUTABLE STATE
 
@@ -54,7 +54,7 @@ contract XENKnights {
 
     constructor(address xenCrypto_, uint256 startTs_, uint256 durationDays_) {
         require(xenCrypto_ != address(0));
-        require(startTs_ > block.timestamp);
+        require(startTs_ >= block.timestamp);
         require(durationDays_ > 0);
         xenCrypto = IERC20(xenCrypto_);
         startTs = startTs_;
@@ -78,21 +78,21 @@ contract XENKnights {
         require(amount > 0, 'XenKnights: illegal amount');
         require(bytes(taprootAddress).length == 62, 'XenKnights: illegal taprootAddress length');
         require(
-            _compare(string(bytes(taprootAddress)[0:4]), 'bc1p'),
+            _compareStr(string(bytes(taprootAddress)[0:4]), 'bc1p'),
             'XenKnights: illegal taprootAddress signature'
         );
     }
 
-    function _canWithdraw(string calldata taprootAddress) private view {
+    function _canWithdraw(string calldata taprootAddress, bytes32 hash) private view {
         require(msg.sender == tx.origin, 'XenKnights: only EOAs allowed');
         require(block.timestamp > endTs, 'XenKnights: competition not yet finished');
         require(bytes(taprootAddress).length == 62, 'XenKnights: illegal taprootAddress length');
         require(
-            _compare(string(bytes(taprootAddress)[0:4]), 'bc1p'),
+            _compareStr(string(bytes(taprootAddress)[0:4]), 'bc1p'),
             'XenKnights: illegal taprootAddress signature'
         );
-        require(amounts[taprootAddress] == 0, 'XenKnights: winner cannot withdraw');
-        require(userAmounts[msg.sender][taprootAddress] > 0, 'XenKnights: nothing to withdraw');
+        require(amounts[hash] == 0, 'XenKnights: winner cannot withdraw');
+        require(userAmounts[msg.sender][hash] > 0, 'XenKnights: nothing to withdraw');
     }
 
     function _canBurn() private view {
@@ -100,23 +100,28 @@ contract XENKnights {
         require(totalPlayers > 0 && xenCrypto.balanceOf(address(this)) > 0, 'XenKnights: already burned');
     }
 
-    function _compare(string memory one, string memory two) private pure returns (bool) {
+    function _compareStr(string memory one, string memory two) private pure returns (bool) {
         return sha256(abi.encodePacked(one)) == sha256(abi.encodePacked(two));
+    }
+
+    function _compare(bytes32 one, bytes32 two) private pure returns (bool) {
+        //return sha256(abi.encodePacked(one)) == sha256(abi.encodePacked(two));
+        return one == two;
     }
 
     // PUBLIC READ INTERFACE
 
     // TODO: remove after testing !!!
-    function lastIndex() public view returns (string memory) {
+    function lastIndex() public view returns (bytes32) {
         return _linkedList[GUARD];
     }
 
     // TODO: remove after testing !!!
-    function nextIndex(uint256 amount) public view returns (string memory) {
+    function nextIndex(uint256 amount) public view returns (bytes32) {
         return _findIndex(amount);
     }
 
-    function indexes(string memory currentIndex, uint256 amount) public view returns (string memory, string memory) {
+    function indexes(bytes32 currentIndex, uint256 amount) public view returns (bytes32, bytes32) {
         return _findIndexes(currentIndex, amount);
     }
 
@@ -130,11 +135,11 @@ contract XENKnights {
     function leaderboard(uint256 count)
         external
         view
-        returns (string[] memory data)
+        returns (bytes32[] memory data)
     {
         uint256 len = count > totalPlayers ? totalPlayers : count;
-        data = new string[](len);
-        string memory index = _linkedList[GUARD];
+        data = new bytes32[](len);
+        bytes32 index = _linkedList[GUARD];
         for(uint256 i = 0; i < len; ++i) {
             data[i] = index;
             index = _linkedList[index];
@@ -149,7 +154,7 @@ contract XENKnights {
     function _findIndex(uint256 amount)
         private
         view
-        returns (string memory candidateIndex)
+        returns (bytes32 candidateIndex)
     {
         candidateIndex = GUARD;
         while (true) {
@@ -160,10 +165,10 @@ contract XENKnights {
         }
     }
 
-    function _findIndexes(string memory currentIndex, uint256 amount)
+    function _findIndexes(bytes32 currentIndex, uint256 amount)
         private
         view
-        returns (string memory prevIndex, string memory candidateIndex)
+        returns (bytes32 prevIndex, bytes32 candidateIndex)
     {
         prevIndex = GUARD;
         candidateIndex = GUARD;
@@ -183,7 +188,7 @@ contract XENKnights {
     /**
      * @dev Verifies insertion position based on `amount` value
      */
-    function _verifyIndex(string memory prevTokenId, uint256 amount, string memory nextTokenId)
+    function _verifyIndex(bytes32 prevTokenId, uint256 amount, bytes32 nextTokenId)
         private
         view
         returns (bool)
@@ -196,15 +201,15 @@ contract XENKnights {
 
     // TODO: remove after testing !!!
     function enterCompetition0(uint256 tokenId, uint256 newAmount) external {
-        string memory taprootAddress = tokenId.toString();
+        bytes32 taprootAddress = keccak256(abi.encodePacked(tokenId));
 
         uint256 existingAmount = amounts[taprootAddress];
         uint256 totalAmount = existingAmount + newAmount;
 
         // Check if we are below min and revert
         require(totalPlayers < MAX_WINNERS || totalAmount > minAmount(), 'XenKnights: amount less than minimum');
-        string memory newIndex;
-        string memory prevIndex;
+        bytes32 newIndex;
+        bytes32 prevIndex;
 
         if (existingAmount == 0) {
             // new stake
@@ -216,13 +221,13 @@ contract XENKnights {
                 totalPlayers++;
             } else {
                 // at capacity => drop the first one (the lowest)
-                string memory first = _linkedList[GUARD];
-                string memory second = _linkedList[first];
+                bytes32 first = _linkedList[GUARD];
+                bytes32 second = _linkedList[first];
                 delete _linkedList[first];
                 uint256 oldAmount = amounts[first];
                 delete amounts[first];
                 _linkedList[GUARD] = second;
-                emit Replaced(first, oldAmount);
+                // emit Replaced(first, oldAmount);
             }
         } else {
             // existing stake: possibly move position inside the list
@@ -241,19 +246,20 @@ contract XENKnights {
      * @dev Attempt to enter competition based on eligible XEN Stake identified by `tokenId`
      * @dev Additionally, `taprootAddress` is supplied and stored along with tokenId
      */
-    function enterCompetition(uint256 newAmount, string calldata taprootAddress) external {
-        _canEnter(newAmount, taprootAddress);
+    function enterCompetition(uint256 newAmount, string calldata taprootAddress_) external {
+        _canEnter(newAmount, taprootAddress_);
 
         require(xenCrypto.transferFrom(msg.sender, address(this), newAmount), 'XenKnights: could not transfer XEN');
 
+        bytes32 taprootAddress = keccak256(bytes(taprootAddress_));
         uint256 existingAmount = amounts[taprootAddress];
         uint256 totalAmount = existingAmount + newAmount;
 
         // Check if we are below min and revert
         require(totalPlayers < MAX_WINNERS || totalAmount > minAmount(), 'XenKnights: amount less than minimum');
 
-        string memory newIndex;
-        string memory prevIndex;
+        bytes32 newIndex;
+        bytes32 prevIndex;
 
         if (existingAmount == 0) {
             // new stake
@@ -265,13 +271,13 @@ contract XENKnights {
                 totalPlayers++;
             } else {
                 // at capacity => drop the first one (the lowest)
-                string memory first = _linkedList[GUARD];
-                string memory second = _linkedList[first];
+                bytes32 first = _linkedList[GUARD];
+                bytes32 second = _linkedList[first];
                 delete _linkedList[first];
                 uint256 oldAmount = amounts[first];
                 delete amounts[first];
                 _linkedList[GUARD] = second;
-                emit Replaced(first, oldAmount);
+                // emit Replaced(first, oldAmount);
             }
         } else {
             // existing stake: possibly move position inside the list
@@ -285,11 +291,12 @@ contract XENKnights {
 
         amounts[taprootAddress] = totalAmount;
         userAmounts[msg.sender][taprootAddress] += newAmount;
-        emit Admitted(msg.sender, taprootAddress, newAmount, totalAmount);
+        emit Admitted(msg.sender, taprootAddress_, newAmount, totalAmount);
     }
 
-    function withdraw(string calldata taprootAddress) external {
-        _canWithdraw(taprootAddress);
+    function withdraw(string calldata taprootAddress_) external {
+        bytes32 taprootAddress = keccak256(bytes(taprootAddress_));
+        _canWithdraw(taprootAddress_, taprootAddress);
 
         uint256 amount = userAmounts[msg.sender][taprootAddress];
         require(
@@ -297,7 +304,7 @@ contract XENKnights {
             'XenKnights: error withdrawing'
         );
         delete userAmounts[msg.sender][taprootAddress];
-        emit Withdrawn(msg.sender, taprootAddress, amount);
+        emit Withdrawn(msg.sender, taprootAddress_, amount);
     }
 
     function burn() external {
@@ -305,7 +312,7 @@ contract XENKnights {
 
         uint256 totalAmount;
         uint256 len = MAX_WINNERS > totalPlayers ? totalPlayers : MAX_WINNERS;
-        string memory index = _linkedList[GUARD];
+        bytes32 index = _linkedList[GUARD];
         for(uint256 i = 0; i < len; ++i) {
             totalAmount += amounts[index];
             index = _linkedList[index];

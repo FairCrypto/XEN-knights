@@ -44,7 +44,9 @@
     "@faircrypto/xen-crypto": "^0.3.2"
   },
   "devDependencies": {
+    "@ethersproject/keccak256": "^5.7.0",
     "@ethersproject/providers": "^5.7.2",
+    "@ethersproject/strings": "^5.7.0",
     "@ethersproject/wallet": "^5.7.0",
     "@truffle/hdwallet-provider": "^2.0.15",
     "dotenv": "^16.0.3",
