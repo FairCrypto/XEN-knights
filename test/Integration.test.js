@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 
-const assert = require('assert')
+const assert = require('assert');
 const timeMachine = require('ganache-time-traveler');
-const {toBigInt} = require("../src/utils");
+const truffleAssert = require('truffle-assertions');
+const {toBigInt, bn2hexStr} = require("../src/utils");
 const { keccak256: keccak } = require("@ethersproject/keccak256");
 const { toUtf8Bytes } = require("@ethersproject/strings");
 require('dotenv').config()
@@ -14,12 +15,67 @@ const XENKnights = artifacts.require("XENKnights")
 
 const extraPrint = process.env.EXTRA_PRINT;
 const { XK_DELAY = 100, XK_DURATION = 1} = process.env;
+
+class Leaderboard {
+    static MAX_LEADERS = 100;
+    #leaders = [];
+    #bids = {};
+    #userBids = {};
+
+    constructor() {
+    }
+
+    get leaders() {
+        return this.#leaders;
+    }
+
+    get bids() {
+        return this.#userBids;
+    }
+
+    get losers() {
+        return Object.keys(this.#bids)
+            .filter((addr) => !this.leaders.includes(addr));
+    }
+
+    #findIndex(amount) {
+        if (this.#leaders.length === 0) return 0;
+        let idx = 0;
+        for (const l of this.#leaders) {
+            if (this.#bids[l] >= amount) {
+                return idx;
+            }
+            idx++;
+        }
+        return idx;
+    }
+
+    enter(taprootAddress, amount, from) {
+        if (!taprootAddress) throw new Error('bad taproot');
+        if (!amount) throw new Error('bad amount');
+        if (!from) throw new Error('bad from');
+        const currentAmount = this.#bids[taprootAddress] || 0n;
+        const idx = this.#findIndex(amount);
+        const currentIdx = this.#leaders.indexOf(taprootAddress);
+        // console.log(taprootAddress, amount, currentIdx, idx);
+        if (idx > currentIdx) {
+            this.#leaders.splice(idx, 0, taprootAddress);
+            if (currentIdx > -1) this.#leaders.splice(currentIdx, 1);
+        }
+        this.#bids[taprootAddress] = currentAmount + amount;
+        if (!this.#userBids[taprootAddress]) this.#userBids[taprootAddress] = [];
+        this.#userBids[taprootAddress].push(from);
+        if(this.#leaders.length > Leaderboard.MAX_LEADERS) {
+            this.#leaders.splice(0, 1);
+        }
+    }
+}
+
 contract("XENKnights", async accounts => {
 
     this.timeout = 999_000_000;
-    const gasEstIndexes = [];
-    const gasEstNextIndex = [];
     const gasUsed = [];
+    const leaderboard = new Leaderboard();
 
     const taproots = Array(110).fill(null)
         .map((_, i) => 'bc1p' + i.toString().padStart(58, '0'));
@@ -127,158 +183,57 @@ contract("XENKnights", async accounts => {
         await assert.doesNotReject(() => xenCrypto.approve(xenKnights.address, b1, { from: accounts[9] }));
     });
 
-    it("shall allow to enter XEN Knights competition with correct params", async () => {
-        await assert.doesNotReject(
-            async () => {
-                const res = await xenKnights.enterCompetition(100n * ether, taproots[1]);
-                extraPrint && console.log('    gas', res.receipt.gasUsed);
-                return res;
-            }
-        );
-    })
-
-    it("shall show decreased amount of XEN owned after entering competition (due to XEN burn)", async () => {
-        const nb0 =  await xenCrypto.balanceOf(accounts[0]).then(toBigInt);
-        assert.ok(b0 - 100n * ether === nb0);
-    })
-
-
-    it("shall allow to enter XEN Knights competition with the different taproot address from the same account", async () => {
-        await assert.doesNotReject(
-            () => xenKnights.enterCompetition(100n * ether, taproots[2])
-        );
-    })
-
-    it("shall allow to retrieve the leaderboard sorted in the right order (ascending by amount staked)", async () => {
-        const board = await xenKnights.leaderboard(100);
-        assert.ok(Array.isArray(board));
-        extraPrint === '2' && console.log(board);
-        assert.ok(board[0] === keccak256(taproots[2]));
-        assert.ok(board[1] === keccak256(taproots[1]));
-    })
-
-    it("shall allow to enter XEN Knights competition from different address", async () => {
-        let nextIndex = await xenKnights.nextIndex(200n * ether);
-        assert.ok(nextIndex === keccak256(taproots[1]));
-        await assert.doesNotReject(
-            () => xenKnights.enterCompetition(200n * ether, taproots[4], { from: accounts[1] })
-        );
-        nextIndex = await xenKnights.nextIndex(200n * ether);
-        assert.ok(nextIndex === keccak256(taproots[1]));
-        await assert.doesNotReject(
-            () => xenKnights.enterCompetition(200n * ether, taproots[5], { from: accounts[1] })
-        );
-    })
-
-    it("shall allow to retrieve the leaderboard sorted in the right order (ascending by amount staked)", async () => {
-        const board = await xenKnights.leaderboard(100);
-        assert.ok(Array.isArray(board));
-        assert.ok(board.length === 4);
-        extraPrint === '2' && console.log(board);
-        assert.ok(board[0] === keccak256(taproots[2]));
-        assert.ok(board[1] === keccak256(taproots[1]));
-        assert.ok(board[2] === keccak256(taproots[5]));
-        assert.ok(board[3] === keccak256(taproots[4]));
-    })
-
-    it("shall allow to retrieve correct cumulative amount by taproot address (1)", async () => {
-        const amount1 = await xenKnights.amounts(keccak256(taproots[1])).then(toBigInt);
-        const amount2 = await xenKnights.amounts(keccak256(taproots[2])).then(toBigInt);
-        const amount3 = await xenKnights.amounts(keccak256(taproots[3])).then(toBigInt);
-        const amount4 = await xenKnights.amounts(keccak256(taproots[4])).then(toBigInt);
-        const amount5 = await xenKnights.amounts(keccak256(taproots[5])).then(toBigInt);
-        extraPrint === '2' && console.log(taproots[1], amount1);
-        extraPrint === '2' && console.log(taproots[2], amount2);
-        extraPrint === '2' && console.log(taproots[3], amount3);
-        extraPrint === '2' && console.log(taproots[4], amount4);
-        extraPrint === '2' &&  console.log(taproots[5], amount5);
-    })
-
-    it("shall allow to enter XEN Knights competition from different address (3) with others' taproot address", async () => {
-        extraPrint === '2' && console.log(await xenKnights.nextIndex(500n * ether));
-        extraPrint === '2' && console.log(await xenKnights.indexes(keccak256(taproots[3]), 500n * ether));
-        await assert.doesNotReject(
-            () => xenKnights.enterCompetition(400n * ether, taproots[1], { from: accounts[2] })
-        );
-    })
-
-    it("shall allow to retrieve the leaderboard sorted in the right order (ascending by amount staked) - 2", async () => {
-        const board = await xenKnights.leaderboard(100);
-        assert.ok(Array.isArray(board));
-        assert.ok(board.length === 4);
-        extraPrint === '2' && console.log(board);
-        assert.ok(board[0] === keccak256(taproots[2]));
-        assert.ok(board[1] === keccak256(taproots[5]));
-        assert.ok(board[2] === keccak256(taproots[4]));
-        assert.ok(board[3] === keccak256(taproots[1]));
-    })
-
-    it("shall allow to enter XEN Knights competition from different address (3) with others' taproot address", async () => {
-        const g1 = await xenKnights.indexes.estimateGas(keccak256(taproots[3]), 900n * ether).then(toBigInt);
-        const g2 = await xenKnights.nextIndex.estimateGas(900n * ether).then(toBigInt);
-        // console.log(g1, g2);
-        const i1 = await xenKnights.indexes(keccak256(taproots[3]), 900n * ether);
-        const i2 = await xenKnights.nextIndex(900n * ether);
-        extraPrint === '2' && console.log(i1);
-        extraPrint === '2' && console.log(i2);
-        await assert.doesNotReject(
-            () => xenKnights.enterCompetition(400n * ether, taproots[1], { from: accounts[2] })
-        );
-    })
-
-    it("shall allow to retrieve correct cumulative amount by taproot address (2)", async () => {
-        const amount1 = await xenKnights.amounts(keccak256(taproots[1])).then(toBigInt);
-        const amount2 = await xenKnights.amounts(keccak256(taproots[2])).then(toBigInt);
-        const amount3 = await xenKnights.amounts(keccak256(taproots[3])).then(toBigInt);
-        const amount4 = await xenKnights.amounts(keccak256(taproots[4])).then(toBigInt);
-        const amount5 = await xenKnights.amounts(keccak256(taproots[5])).then(toBigInt);
-        extraPrint === '2' && console.log(taproots[1], amount1);
-        extraPrint === '2' && console.log(taproots[2], amount2);
-        extraPrint === '2' && console.log(taproots[3], amount3);
-        extraPrint === '2' && console.log(taproots[4], amount4);
-        extraPrint === '2' && console.log(taproots[5], amount5);
-    })
-
-    it("shall allow to retrieve the leaderboard sorted in the right order (ascending by amount burned) - 2", async () => {
-        const board = await xenKnights.leaderboard(100);
-        assert.ok(Array.isArray(board));
-        assert.ok(board.length === 4);
-        extraPrint === '2' && console.log(board);
-        assert.ok(board[0] === keccak256(taproots[2]));
-        assert.ok(board[1] === keccak256(taproots[5]));
-        assert.ok(board[2] === keccak256(taproots[4]));
-        assert.ok(board[3] === keccak256(taproots[1]));
-    })
-
-    it("shall allow users with new taproot addresses enter the competition pushing out losers", async () => {
-        for await (const addr of taproots.slice(6)) {
+    it("shall allow users with legal taproot addresses and legal amounts to enter competition", async () => {
+        // let minAmount = 1n * ether;
+        for await (const addr of taproots) {
             const idx = Math.floor(Math.random() * 10);
-            const minAmount = await xenKnights.minAmount().then(toBigInt);
             await assert.doesNotReject(
                 async () => {
-                    const res = await xenKnights.enterCompetition(minAmount + 1n, addr, { from: accounts[idx] })
-                    gasUsed.push(res.receipt.gasUsed);
-                    return res;
+                    const amount = BigInt(Math.floor(Math.random() * 10) + 1) * ether;
+                    const result = await xenKnights.enterCompetition(amount, addr, { from: accounts[idx] })
+                    // minAmount += ();
+                    gasUsed.push(result.receipt.gasUsed);
+                    truffleAssert.eventEmitted(
+                        result,
+                        'Admitted',
+                        (event) => {
+                            leaderboard.enter(event.taprootAddress, BigInt(bn2hexStr(event.amount)), accounts[idx]);
+                            return event.user === accounts[idx]
+                                && event.taprootAddress === addr
+                                && BigInt(bn2hexStr(event.amount)) === BigInt(amount)
+                        })
+                    return result;
                 }
             );
             process.stdout.write('.');
         }
-        const g1 = await xenKnights.indexes.estimateGas(keccak256(taproots[109]), 100); //.then(_ => _.toNumber());
-        const g2 = await xenKnights.nextIndex.estimateGas(100); //.then(_ => _.toNumber());
-        console.log(g1);
-        console.log(g2);
         // ................................................................................................
         process.stdout.write('\n');
     })
 
-    it("shall allow to retrieve the leaderboard sorted in the right order (ascending by amount burned) - 2", async () => {
-        const board = await xenKnights.leaderboard(100);
-        assert.ok(Array.isArray(board));
-        console.log(board);
+    it("shall reject to load leaderboard before competition is over", async () => {
+        await assert.rejects(
+            () => xenKnights.loadLeaders(taproots.slice(0, 100).map(keccak256)),
+            'Admin: cannot load leaders before end'
+        );
+    });
+
+    it("shall allow to retrieve the leaderboard sorted in the right order", async () => {
+        // const board = await xenKnights.leaderboard(100);
+        // assert.ok(Array.isArray(board));
+        console.log(leaderboard.leaders);
+        console.log(leaderboard.losers);
         // assert.ok(board[0] === taproots[2]);
         // assert.ok(board[1] === taproots[5]);
         // assert.ok(board[2] === taproots[4]);
         // assert.ok(board[3] === taproots[1]);
+    })
+
+    it("shall reject anyone to burn winners' funds before competition is over and final", async () => {
+        await assert.rejects(
+            () => xenKnights.burn({ from: accounts[9] }),
+            'XenKnights: competition not yet final'
+        );
     })
 
     it("shall reject to enter XEN Knights competition after the end time", async () => {
@@ -290,37 +245,68 @@ contract("XENKnights", async accounts => {
         );
     })
 
-    it("shall reject to withdraw winning amount after auction end time", async () => {
+    it("shall reject a non-admin to load results", async () => {
         await assert.rejects(
-            () => xenKnights.withdraw(taproots[0]),
-            'XenKnights: nothing to withdraw'
+            () => xenKnights.loadLeaders(taproots.slice(0, 100).map(keccak256), { from: accounts[8] }),
+            'Ownable: caller is not the owner'
         );
+    })
+
+    it("shall reject an admin to load incomplete results", async () => {
         await assert.rejects(
-            () => xenKnights.withdraw(taproots[1]),
-            'XenKnights: winner cannot withdraw'
+            () => xenKnights.loadLeaders(taproots.map(keccak256), { from: accounts[0] }),
+            'Admin: illegal list length'
         );
+    })
+
+   it("shall reject an admin to load incomplete results", async () => {
+        await assert.rejects(
+            () => xenKnights.loadLeaders(taproots.map(keccak256), { from: accounts[0] }),
+            'Admin: illegal list length'
+        );
+    })
+
+  it("shall allow an admin to load good results", async () => {
         await assert.doesNotReject(
-            () => xenKnights.withdraw(taproots[2]),
-            // 'XenKnights: winner cannot withdraw'
+            () => xenKnights.loadLeaders(leaderboard.leaders.map(keccak256), { from: accounts[0] })
         );
-        await assert.rejects(
-            () => xenKnights.withdraw(taproots[3]),
-            'XenKnights: nothing to withdraw'
-        );
-        await assert.rejects(
-            () => xenKnights.withdraw(taproots[4]),
-            'XenKnights: winner cannot withdraw'
-        );
-        await assert.rejects(
-            () => xenKnights.withdraw(taproots[5]),
-            'XenKnights: winner cannot withdraw'
-        );
+    })
+
+    it("shall reject to withdraw winning amount after auction end time", async () => {
+        for await (const addr of leaderboard.leaders) {
+            await assert.rejects(
+                () => xenKnights.withdraw(addr),
+                'XenKnights: winner cannot withdraw'
+            )
+        }
+    })
+
+    it("shall allow to withdraw losers amounts after auction end time", async () => {
+        for await (const addr of leaderboard.losers) {
+            for await (const from of leaderboard.bids[addr]) {
+                await assert.doesNotReject(
+                    () => xenKnights.withdraw(addr, { from }),
+                    'error withdrawing ' + addr + ': ' + leaderboard.bids[addr] + ' ' + from
+                )
+            }
+        }
+    })
+
+    it("owned amount of XEN should be equal to burning amount", async () => {
+        const xen = await xenCrypto.balanceOf(xenKnights.address).then(toBigInt);
+        const toBurn = await xenKnights.totalToBurn().then(toBigInt);
+        assert.ok(xen === toBurn);
     })
 
     it("shall allow anyone to burn winners' funds after auction end time", async () => {
         await assert.doesNotReject(
             () => xenKnights.burn()
         );
+    })
+
+    it("owned amount of XEN should be equal to 0 after burning", async () => {
+        const xen = await xenCrypto.balanceOf(xenKnights.address).then(toBigInt);
+        assert.ok(xen === 0n);
     })
 
     it("optional min/max gas numbers (requires EXTRA_PRINT)", async () => {
