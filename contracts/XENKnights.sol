@@ -28,8 +28,6 @@ contract XENKnights is Ownable {
     // PUBLIC CONSTANTS
     string public constant AUTHORS = "@MrJackLevin @ackebom @lbelyaev faircrypto.org";
     uint256 public constant SECS_IN_DAY = 3_600 * 24;
-    // used as a unique marker for beginning and end of a linked list
-    // bytes32 public constant GUARD = keccak256(bytes('guard'));
 
     // common business logic
     uint256 public constant MAX_WINNERS = 100;
@@ -78,6 +76,7 @@ contract XENKnights is Ownable {
         require(msg.sender == tx.origin, 'XenKnights: only EOAs allowed');
         require(block.timestamp > startTs, 'XenKnights: competition not yet started');
         require(block.timestamp < endTs, 'XenKnights: competition already finished');
+        require(status < Status.Final, 'XenKnights: competition not in progress');
         require(amount > 0, 'XenKnights: illegal amount');
         require(bytes(taprootAddress).length == 62, 'XenKnights: illegal taprootAddress length');
         require(
@@ -89,6 +88,7 @@ contract XENKnights is Ownable {
     function _canWithdraw(string calldata taprootAddress, bytes32 hash) private view {
         require(msg.sender == tx.origin, 'XenKnights: only EOAs allowed');
         require(block.timestamp > endTs, 'XenKnights: competition not yet finished');
+        require(status > Status.InProgress, 'XenKnights: competition still in progress');
         require(bytes(taprootAddress).length == 62, 'XenKnights: illegal taprootAddress length');
         require(
             _compareStr(string(bytes(taprootAddress)[0:4]), 'bc1p'),

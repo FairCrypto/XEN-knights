@@ -3,9 +3,10 @@
 const assert = require('assert');
 const timeMachine = require('ganache-time-traveler');
 const truffleAssert = require('truffle-assertions');
-const {toBigInt, bn2hexStr} = require("../src/utils");
+const { toBigInt, bn2hexStr } = require("../src/utils");
 const { keccak256: keccak } = require("@ethersproject/keccak256");
 const { toUtf8Bytes } = require("@ethersproject/strings");
+const { shuffled } = require("ethers/lib/utils");
 require('dotenv').config()
 
 const keccak256 = (str) => keccak(toUtf8Bytes(str));
@@ -183,6 +184,13 @@ contract("XENKnights", async accounts => {
         await assert.doesNotReject(() => xenCrypto.approve(xenKnights.address, b1, { from: accounts[9] }));
     });
 
+    it("shall reject to load leaderboard before competition is over", async () => {
+        await assert.rejects(
+            () => xenKnights.loadLeaders(taproots.slice(0, 100).map(keccak256)),
+            'Admin: cannot load leaders before end'
+        );
+    });
+
     it("shall allow users with legal taproot addresses and legal amounts to enter competition", async () => {
         // let minAmount = 1n * ether;
         for await (const addr of taproots) {
@@ -221,8 +229,8 @@ contract("XENKnights", async accounts => {
     it("shall allow to retrieve the leaderboard sorted in the right order", async () => {
         // const board = await xenKnights.leaderboard(100);
         // assert.ok(Array.isArray(board));
-        console.log(leaderboard.leaders);
-        console.log(leaderboard.losers);
+        extraPrint && console.log(leaderboard.leaders);
+        extraPrint && console.log(leaderboard.losers);
         // assert.ok(board[0] === taproots[2]);
         // assert.ok(board[1] === taproots[5]);
         // assert.ok(board[2] === taproots[4]);
@@ -237,7 +245,7 @@ contract("XENKnights", async accounts => {
     })
 
     it("shall reject to enter XEN Knights competition after the end time", async () => {
-        await timeMachine.advanceTime(1 * 24 * 3600 + 3600);
+        await timeMachine.advanceTime(XK_DURATION * 24 * 3600 + 3600);
         await timeMachine.advanceBlock();
         await assert.rejects(
             () => xenKnights.enterCompetition(1, taproots[1]),
@@ -245,24 +253,37 @@ contract("XENKnights", async accounts => {
         );
     })
 
+    it("shall reject a loser to withdraw before results are final", async () => {
+        const addr = leaderboard.losers[0];
+        const from = leaderboard.bids[addr]?.[0];
+        assert.ok(typeof addr === 'string', 'bad taproot');
+        assert.ok(typeof from === 'string', 'bad address');
+        await assert.rejects(
+            () => xenKnights.withdraw(addr, { from }),
+            'XenKnights: competition still in progress'
+        )
+    });
+
     it("shall reject a non-admin to load results", async () => {
         await assert.rejects(
-            () => xenKnights.loadLeaders(taproots.slice(0, 100).map(keccak256), { from: accounts[8] }),
+            () => xenKnights.loadLeaders(taproots.map(keccak256), { from: accounts[8] }),
             'Ownable: caller is not the owner'
         );
     })
 
-    it("shall reject an admin to load incomplete results", async () => {
+    it("shall reject an admin to load results over limit", async () => {
         await assert.rejects(
-            () => xenKnights.loadLeaders(taproots.map(keccak256), { from: accounts[0] }),
+            () => xenKnights.loadLeaders(taproots.slice(0, 101).map(keccak256), { from: accounts[0] }),
             'Admin: illegal list length'
         );
     })
 
-   it("shall reject an admin to load incomplete results", async () => {
-        await assert.rejects(
-            () => xenKnights.loadLeaders(taproots.map(keccak256), { from: accounts[0] }),
-            'Admin: illegal list length'
+   it("shall reject an admin to load incorrectly sorted results", async () => {
+       const unsorted = shuffled([...leaderboard.leaders]);
+       assert.ok(unsorted.length === leaderboard.leaders.length, 'bad shuffle');
+       await assert.rejects(
+            () => xenKnights.loadLeaders(unsorted.map(keccak256), { from: accounts[0] }),
+            'Admin: list not sorted'
         );
     })
 
@@ -291,6 +312,17 @@ contract("XENKnights", async accounts => {
             }
         }
     })
+
+    it("shall reject a loser to withdraw bid amount one more time", async () => {
+        const addr = leaderboard.losers[0];
+        const from = leaderboard.bids[addr]?.[0];
+        assert.ok(typeof addr === 'string', 'bad taproot');
+        assert.ok(typeof from === 'string', 'bad address');
+        await assert.rejects(
+            () => xenKnights.withdraw(addr, { from }),
+            'XenKnights: nothing to withdraw'
+        )
+    });
 
     it("owned amount of XEN should be equal to burning amount", async () => {
         const xen = await xenCrypto.balanceOf(xenKnights.address).then(toBigInt);
