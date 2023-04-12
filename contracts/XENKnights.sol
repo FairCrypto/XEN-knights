@@ -3,6 +3,7 @@ pragma solidity ^0.8.10;
 
 import "@faircrypto/xen-crypto/contracts/XENCrypto.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./libs/Strings.sol";
 
@@ -13,7 +14,7 @@ import "./libs/Strings.sol";
     https://gist.github.com/fiveoutofnine/5140b17f6185aacb71fc74d3a315a9da
 
 */
-contract XENKnights is Ownable {
+contract XENKnights is IBurnRedeemable, Ownable, ERC165 {
 
     enum Status {
         Waiting,
@@ -69,6 +70,13 @@ contract XENKnights is Ownable {
     event Admitted(address indexed user, string taprootAddress, uint256 amount, uint256 totalAmount);
     event Withdrawn(address indexed user, string taprootAddress, uint256 amount);
     event Burned(uint256 amount);
+
+    // IERC-165
+
+    function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
+        return interfaceId == type(IBurnRedeemable).interfaceId ||
+        super.supportsInterface(interfaceId);
+    }
 
     // PRIVATE HELPERS
 
@@ -190,16 +198,22 @@ contract XENKnights is Ownable {
         emit Withdrawn(msg.sender, taprootAddress_, amount);
     }
 
+    function onTokenBurned(address user, uint256 amount) external {
+        require(msg.sender == address(xenCrypto), "IBurnableRedeemable: illegal callback caller");
+        require(user == address(this), 'IBurnableRedeemable: illegal burner');
+        require(amount == totalToBurn, 'IBurnableRedeemable: illegal amount');
+        require(status == Status.Final, 'IBurnableRedeemable: illegal status');
+        require(xenCrypto.balanceOf(address(this)) == 0, 'IBurnableRedeemable: not all burned');
+
+        status = Status.Ended;
+        emit StatusChanged(Status.Ended, block.timestamp);
+        emit Burned(amount);
+    }
+
     function burn() external {
         _canBurn();
 
-        require(
-            xenCrypto.transfer(address(0xdead), totalToBurn),
-            'XenKnights: error burning'
-        );
-        status = Status.Ended;
-
-        emit StatusChanged(Status.Ended, block.timestamp);
-        emit Burned(totalToBurn);
+        xenCrypto.approve(address(this), totalToBurn);
+        IBurnableToken(address(xenCrypto)).burn(address(this), totalToBurn);
     }
 }
