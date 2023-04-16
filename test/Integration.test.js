@@ -327,7 +327,6 @@ contract("XENKnights", async accounts => {
     it("owned amount of XEN should be equal to burning amount", async () => {
         const xen = await xenCrypto.balanceOf(xenKnights.address).then(toBigInt);
         const toBurn = await xenKnights.totalToBurn().then(toBigInt);
-        console.log(xen)
         assert.ok(xen === toBurn);
     })
 
@@ -339,7 +338,6 @@ contract("XENKnights", async accounts => {
 
     it("owned amount of XEN should be equal to 0 after burning", async () => {
         const xen = await xenCrypto.balanceOf(xenKnights.address).then(toBigInt);
-        console.log(xen)
         assert.ok(xen === 0n);
     })
 
