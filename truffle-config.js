@@ -24,6 +24,22 @@ module.exports = {
       gasLimit: 30_000_000,
       //from: '0x0E4F1eB5c6c1ae7D6B7B2A8FcbCB4627644ad51E'
     },
+    mainnet: {
+      provider: () => new HDWalletProvider({
+        privateKeys: privKeysRinkeby,
+        providerOrUrl: `https://:${infuraSecret}@mainnet.infura.io/v3/${infuraKey}`,
+        pollingInterval: 56000
+      }),
+      network_id: 1,
+      confirmations: 2,
+      timeoutBlocks: 100,
+      gas: 2_000_000,
+      // maxPriorityFeePerGas: 1_000_000_000,
+      maxFeePerGas: 28_000_000_000,
+      skipDryRun: true,
+      from: '0x6B889Dcfad1a6ddf7dE3bC9417F5F51128efc964',
+      networkCheckTimeout: 999999
+    },
     goerli: {
       provider: () => new HDWalletProvider({
         privateKeys: privKeysRinkeby,
@@ -98,7 +114,8 @@ module.exports = {
     },
     x1: {
       provider: () => new HDWalletProvider({
-        privateKeys: [process.env.PK_X1],
+        privateKeys: privKeysRinkeby,
+        //privateKeys: [process.env.PK_X1],
         providerOrUrl: `https://x1-devnet.xen.network`,
         pollingInterval: 5_000
       }),

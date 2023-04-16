@@ -3,6 +3,8 @@ pragma solidity ^0.8.10;
 
 import "@faircrypto/xen-crypto/contracts/XENCrypto.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "./libs/Strings.sol";
 
 /*
@@ -12,36 +14,34 @@ import "./libs/Strings.sol";
     https://gist.github.com/fiveoutofnine/5140b17f6185aacb71fc74d3a315a9da
 
 */
-contract XENKnights {
+contract XENKnights is IBurnRedeemable, Ownable, ERC165 {
+
+    enum Status {
+        Waiting,
+        InProgress,
+        Final,      // leaderboard loaded
+        Ended,      // XEN burned for leaders
+        Canceled    // in case shit happens
+    }
 
     using Strings for uint256;
 
     // PUBLIC CONSTANTS
     string public constant AUTHORS = "@MrJackLevin @ackebom @lbelyaev faircrypto.org";
     uint256 public constant SECS_IN_DAY = 3_600 * 24;
-    // used as a unique marker for beginning and end of a linked list
-    bytes32 public constant GUARD = keccak256(bytes('guard'));
 
     // common business logic
     uint256 public constant MAX_WINNERS = 100;
 
     // PUBLIC MUTABLE STATE
     uint256 public totalPlayers;
-    bool public burned;
+    uint256 public totalToBurn;
+    Status public status;
     // taproot address => total bid amount
     mapping(bytes32 => uint256) public amounts;
     // user address => taproot address => total bid amount
     mapping(address => mapping(bytes32 => uint256)) public userAmounts;
-
-    // PRIVATE STATE
-
-    // linked sorted list of taproot addresses (primary keys)
-    //      GUARD => ...
-    //      ... => X
-    //      X => Y (amounts[Y] >= amounts[X])
-    //      Y => ...
-    //      ... => GUARD
-    mapping(bytes32 => bytes32) private _linkedList;
+    bytes32[] public leaders;
 
     // PUBLIC IMMUTABLE STATE
 
@@ -56,18 +56,27 @@ contract XENKnights {
         require(xenCrypto_ != address(0));
         require(startTs_ >= block.timestamp);
         require(durationDays_ > 0);
+
         xenCrypto = IERC20(xenCrypto_);
         startTs = startTs_;
         endTs = startTs_ + durationDays_ * SECS_IN_DAY;
-        _linkedList[GUARD] = GUARD; // initialize the linked list
+
+        emit StatusChanged(Status.Waiting, block.timestamp);
     }
 
     // EVENTS
 
+    event StatusChanged(Status status, uint256 ts);
     event Admitted(address indexed user, string taprootAddress, uint256 amount, uint256 totalAmount);
-    event Replaced(string taprootAddress, uint256 amount);
     event Withdrawn(address indexed user, string taprootAddress, uint256 amount);
     event Burned(uint256 amount);
+
+    // IERC-165
+
+    function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
+        return interfaceId == type(IBurnRedeemable).interfaceId ||
+        super.supportsInterface(interfaceId);
+    }
 
     // PRIVATE HELPERS
 
@@ -75,6 +84,7 @@ contract XENKnights {
         require(msg.sender == tx.origin, 'XenKnights: only EOAs allowed');
         require(block.timestamp > startTs, 'XenKnights: competition not yet started');
         require(block.timestamp < endTs, 'XenKnights: competition already finished');
+        require(status < Status.Final, 'XenKnights: competition not in progress');
         require(amount > 0, 'XenKnights: illegal amount');
         require(bytes(taprootAddress).length == 62, 'XenKnights: illegal taprootAddress length');
         require(
@@ -86,18 +96,21 @@ contract XENKnights {
     function _canWithdraw(string calldata taprootAddress, bytes32 hash) private view {
         require(msg.sender == tx.origin, 'XenKnights: only EOAs allowed');
         require(block.timestamp > endTs, 'XenKnights: competition not yet finished');
+        require(status > Status.InProgress, 'XenKnights: competition still in progress');
         require(bytes(taprootAddress).length == 62, 'XenKnights: illegal taprootAddress length');
         require(
             _compareStr(string(bytes(taprootAddress)[0:4]), 'bc1p'),
             'XenKnights: illegal taprootAddress signature'
         );
-        require(amounts[hash] == 0, 'XenKnights: winner cannot withdraw');
         require(userAmounts[msg.sender][hash] > 0, 'XenKnights: nothing to withdraw');
+        require(amounts[hash] > 0, 'XenKnights: winner cannot withdraw');
     }
 
     function _canBurn() private view {
-        require(block.timestamp > endTs, 'XenKnights: competition not yet finished');
-        require(totalPlayers > 0 && xenCrypto.balanceOf(address(this)) > 0, 'XenKnights: already burned');
+        require(block.timestamp > endTs, 'XenKnights: competition still in progress');
+        require(status > Status.InProgress, 'XenKnights: competition not yet final');
+        require(status < Status.Ended, 'XenKnights: already burned');
+        require(xenCrypto.balanceOf(address(this)) > 0, 'XenKnights: nothing to burn');
     }
 
     function _compareStr(string memory one, string memory two) private pure returns (bool) {
@@ -111,136 +124,45 @@ contract XENKnights {
 
     // PUBLIC READ INTERFACE
 
-    // TODO: remove after testing !!!
-    function lastIndex() public view returns (bytes32) {
-        return _linkedList[GUARD];
-    }
-
-    // TODO: remove after testing !!!
-    function nextIndex(uint256 amount) public view returns (bytes32) {
-        return _findIndex(amount);
-    }
-
-    function indexes(bytes32 currentIndex, uint256 amount) public view returns (bytes32, bytes32) {
-        return _findIndexes(currentIndex, amount);
-    }
-
-    function minAmount() public view returns (uint256) {
-        return amounts[_linkedList[GUARD]];
-    }
-
     /**
      * @dev Returns `count` first tokenIds by lowest amount
      */
-    function leaderboard(uint256 count)
+    function leaderboard(uint256)
         external
         view
         returns (bytes32[] memory data)
     {
-        uint256 len = count > totalPlayers ? totalPlayers : count;
-        data = new bytes32[](len);
-        bytes32 index = _linkedList[GUARD];
-        for(uint256 i = 0; i < len; ++i) {
-            data[i] = index;
-            index = _linkedList[index];
+        data = leaders;
+    }
+
+    // ADMIN INTERFACE
+
+    function loadLeaders(bytes32[] calldata taprootAddresses) external onlyOwner {
+        require(block.timestamp > endTs, 'Admin: cannot load leaders before end');
+        require(status == Status.InProgress, 'Admin: bad status');
+        require(
+            taprootAddresses.length > 0 && taprootAddresses.length < MAX_WINNERS + 1,
+            'Admin: illegal list length'
+        );
+
+        uint256 prevAmount = amounts[taprootAddresses[0]];
+        for (uint256 i = 0; i < taprootAddresses.length; i++) {
+            require(amounts[taprootAddresses[i]] > 0, 'Admin: winner\'s amount cannot be zero');
+            require(
+                i == 0 || amounts[taprootAddresses[i]] >= prevAmount,
+                'Admin: list not sorted'
+            );
+            prevAmount = amounts[taprootAddresses[i]];
+            leaders.push(taprootAddresses[i]);
+            totalToBurn += prevAmount;
+            amounts[taprootAddresses[i]] = 0; // to mark winners from losers
         }
+        status = Status.Final;
+
+        emit StatusChanged(Status.Final, block.timestamp);
     }
 
     // PRIVATE HELPERS
-
-    /**
-     * @dev Finds and returns list insertion position based on `amount` value
-     */
-    function _findIndex(uint256 amount)
-        private
-        view
-        returns (bytes32 candidateIndex)
-    {
-        candidateIndex = GUARD;
-        while (true) {
-            if (_verifyIndex(candidateIndex, amount, _linkedList[candidateIndex])) {
-                return candidateIndex;
-            }
-            candidateIndex = _linkedList[candidateIndex];
-        }
-    }
-
-    function _findIndexes(bytes32 currentIndex, uint256 amount)
-        private
-        view
-        returns (bytes32 prevIndex, bytes32 candidateIndex)
-    {
-        prevIndex = GUARD;
-        candidateIndex = GUARD;
-        bool found = false;
-        while (true) {
-            if (_compare(_linkedList[prevIndex], currentIndex)) {
-                found = true;
-            }
-            if (_verifyIndex(candidateIndex, amount, _linkedList[candidateIndex])) {
-                return (prevIndex, candidateIndex);
-            }
-            if (!found) prevIndex = candidateIndex;
-            candidateIndex = _linkedList[candidateIndex];
-        }
-    }
-
-    /**
-     * @dev Verifies insertion position based on `amount` value
-     */
-    function _verifyIndex(bytes32 prevTokenId, uint256 amount, bytes32 nextTokenId)
-        private
-        view
-        returns (bool)
-    {
-        return (_compare(prevTokenId, GUARD) || amounts[prevTokenId] < amount) &&
-        (_compare(nextTokenId, GUARD) || amount <= amounts[nextTokenId]);
-    }
-
-    // PUBLIC TX INTERFACE
-
-    // TODO: remove after testing !!!
-    function enterCompetition0(uint256 tokenId, uint256 newAmount) external {
-        bytes32 taprootAddress = keccak256(abi.encodePacked(tokenId));
-
-        uint256 existingAmount = amounts[taprootAddress];
-        uint256 totalAmount = existingAmount + newAmount;
-
-        // Check if we are below min and revert
-        require(totalPlayers < MAX_WINNERS || totalAmount > minAmount(), 'XenKnights: amount less than minimum');
-        bytes32 newIndex;
-        bytes32 prevIndex;
-
-        if (existingAmount == 0) {
-            // new stake
-            newIndex = _findIndex(totalAmount);
-            _linkedList[taprootAddress] = _linkedList[newIndex];
-            _linkedList[newIndex] = taprootAddress;
-            if (totalPlayers < MAX_WINNERS) {
-                // room for one more => increase count
-                totalPlayers++;
-            } else {
-                // at capacity => drop the first one (the lowest)
-                bytes32 first = _linkedList[GUARD];
-                bytes32 second = _linkedList[first];
-                delete _linkedList[first];
-                uint256 oldAmount = amounts[first];
-                delete amounts[first];
-                _linkedList[GUARD] = second;
-                // emit Replaced(first, oldAmount);
-            }
-        } else {
-            // existing stake: possibly move position inside the list
-            (prevIndex, newIndex) = _findIndexes(taprootAddress, totalAmount);
-            if (!_compare(newIndex, taprootAddress)) {
-                _linkedList[prevIndex] = _linkedList[taprootAddress];
-                _linkedList[taprootAddress] = _linkedList[newIndex];
-                _linkedList[newIndex] = taprootAddress;
-            }
-        }
-
-        amounts[taprootAddress] = totalAmount;
-    }
 
     /**
      * @dev Attempt to enter competition based on eligible XEN Stake identified by `tokenId`
@@ -248,49 +170,18 @@ contract XENKnights {
      */
     function enterCompetition(uint256 newAmount, string calldata taprootAddress_) external {
         _canEnter(newAmount, taprootAddress_);
-
         require(xenCrypto.transferFrom(msg.sender, address(this), newAmount), 'XenKnights: could not transfer XEN');
 
         bytes32 taprootAddress = keccak256(bytes(taprootAddress_));
         uint256 existingAmount = amounts[taprootAddress];
         uint256 totalAmount = existingAmount + newAmount;
 
-        // Check if we are below min and revert
-        require(totalPlayers < MAX_WINNERS || totalAmount > minAmount(), 'XenKnights: amount less than minimum');
-
-        bytes32 newIndex;
-        bytes32 prevIndex;
-
-        if (existingAmount == 0) {
-            // new stake
-            newIndex = _findIndex(totalAmount);
-            _linkedList[taprootAddress] = _linkedList[newIndex];
-            _linkedList[newIndex] = taprootAddress;
-            if (totalPlayers < MAX_WINNERS) {
-                // room for one more => increase count
-                totalPlayers++;
-            } else {
-                // at capacity => drop the first one (the lowest)
-                bytes32 first = _linkedList[GUARD];
-                bytes32 second = _linkedList[first];
-                delete _linkedList[first];
-                uint256 oldAmount = amounts[first];
-                delete amounts[first];
-                _linkedList[GUARD] = second;
-                // emit Replaced(first, oldAmount);
-            }
-        } else {
-            // existing stake: possibly move position inside the list
-            (prevIndex, newIndex) = _findIndexes(taprootAddress, totalAmount);
-            if (!_compare(newIndex, taprootAddress)) {
-                _linkedList[prevIndex] = _linkedList[taprootAddress];
-                _linkedList[taprootAddress] = _linkedList[newIndex];
-                _linkedList[newIndex] = taprootAddress;
-            }
-        }
-
         amounts[taprootAddress] = totalAmount;
         userAmounts[msg.sender][taprootAddress] += newAmount;
+        if (status == Status.Waiting) {
+            status = Status.InProgress;
+            emit StatusChanged(Status.InProgress, block.timestamp);
+        }
         emit Admitted(msg.sender, taprootAddress_, newAmount, totalAmount);
     }
 
@@ -307,22 +198,22 @@ contract XENKnights {
         emit Withdrawn(msg.sender, taprootAddress_, amount);
     }
 
+    function onTokenBurned(address user, uint256 amount) external {
+        require(msg.sender == address(xenCrypto), "IBurnableRedeemable: illegal callback caller");
+        require(user == address(this), 'IBurnableRedeemable: illegal burner');
+        require(amount == totalToBurn, 'IBurnableRedeemable: illegal amount');
+        require(status == Status.Final, 'IBurnableRedeemable: illegal status');
+        require(xenCrypto.balanceOf(address(this)) == 0, 'IBurnableRedeemable: not all burned');
+
+        status = Status.Ended;
+        emit StatusChanged(Status.Ended, block.timestamp);
+        emit Burned(amount);
+    }
+
     function burn() external {
         _canBurn();
 
-        uint256 totalAmount;
-        uint256 len = MAX_WINNERS > totalPlayers ? totalPlayers : MAX_WINNERS;
-        bytes32 index = _linkedList[GUARD];
-        for(uint256 i = 0; i < len; ++i) {
-            totalAmount += amounts[index];
-            index = _linkedList[index];
-        }
-
-        require(
-            xenCrypto.transfer(address(0xdead), totalAmount),
-            'XenKnights: error burning'
-        );
-        burned = true;
-        emit Burned(totalAmount);
+        xenCrypto.approve(address(this), totalToBurn);
+        IBurnableToken(address(xenCrypto)).burn(address(this), totalToBurn);
     }
 }
