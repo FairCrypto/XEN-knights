@@ -203,7 +203,6 @@ contract XENKnights is IBurnRedeemable, Ownable, ERC165 {
         require(user == address(this), 'IBurnableRedeemable: illegal burner');
         require(amount == totalToBurn, 'IBurnableRedeemable: illegal amount');
         require(status == Status.Final, 'IBurnableRedeemable: illegal status');
-        require(xenCrypto.balanceOf(address(this)) == 0, 'IBurnableRedeemable: not all burned');
 
         status = Status.Ended;
         emit StatusChanged(Status.Ended, block.timestamp);
